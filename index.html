@@ -137,6 +137,11 @@ function Main(){
             const {data} = await db.from('crm_leads').insert({name,status_id:def}).select('*, status:crm_lead_statuses(*)').single();
             await load(); setOpenLead(data);
           }} className="bg-indigo-600 hover:bg-indigo-700 text-white text-sm rounded-lg px-3 py-1.5 font-medium">+ Lead</button>
+        <button title="Change password" onClick={async()=>{
+            const p = prompt('New password (min 6 characters):');
+            if(p && p.length>=6){ const {error}=await db.auth.updateUser({password:p}); alert(error?('Error: '+error.message):'Password updated.'); }
+            else if(p!==null){ alert('Password must be at least 6 characters.'); }
+          }} className="text-slate-400 hover:text-slate-600 text-sm px-2">🔑</button>
         <button onClick={()=>db.auth.signOut()} className="text-slate-400 hover:text-slate-600 text-sm px-2">Sign out</button>
       </header>
 
