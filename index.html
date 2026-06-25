@@ -39,6 +39,14 @@ const fmtDate = (s) => s ? new Date(s).toLocaleString(undefined,{month:'short',d
 const fmtDay  = (s) => s ? new Date(s).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}) : '';
 const money   = (n) => (n||n===0) ? '$'+Number(n).toLocaleString() : '';
 const dotClass = (s) => s.kind==='won' ? 'bg-emerald-500' : s.kind==='lost' ? 'bg-rose-400' : s.label==='Holding' ? 'bg-accent' : 'bg-brand';
+// Turn any URLs in free text into clickable links that open in a new tab
+function linkify(text){
+  if(!text) return text;
+  return text.split(/(https?:\/\/[^\s]+)/g).map((p,i)=>
+    /^https?:\/\//.test(p)
+      ? <a key={i} href={p} target="_blank" rel="noopener noreferrer" className="text-brand underline break-all">{p}</a>
+      : p);
+}
 
 // =====================================================================
 // Auth gate
@@ -267,7 +275,7 @@ function ContactsView({contacts,onOpen}){
           <tbody>
             {contacts.map(c=>(
               <tr key={c.id} onClick={()=>onOpen(c.id)} className="border-t border-slate-100 hover:bg-slate-50 cursor-pointer">
-                <td className="px-4 py-2.5 font-medium">{c.name||'(no name)'}</td>
+                <td className="px-4 py-2.5 font-medium">{c.name||'(no name)'} {c.linkedin_url && <a href={c.linkedin_url} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} className="text-brand text-xs font-normal">↗</a>}</td>
                 <td className="px-4 py-2.5 text-slate-500">{c.lead?.name||'—'}</td>
                 <td className="px-4 py-2.5 text-slate-500">{c.title||''}</td>
                 <td className="px-4 py-2.5 text-slate-500">{(c.crm_contact_emails||[]).map(e=>e.email).join(', ')}</td>
@@ -371,6 +379,12 @@ function ContactDetail({contactId,onClose,onOpenLead,onChange}){
         <div className="text-sm text-slate-500 mt-2">
           at <button className="text-brand font-medium" onClick={()=>onOpenLead(c.lead_id)}>{c.lead?.name||'—'}</button>
         </div>
+        <div className="flex items-center gap-2 mt-2">
+          <span className="text-sm text-slate-400">in</span>
+          <input defaultValue={c.linkedin_url||''} placeholder="LinkedIn profile URL" onBlur={e=>e.target.value!==(c.linkedin_url||'')&&patch({linkedin_url:e.target.value})}
+            className="text-sm border border-slate-200 rounded-lg px-2 py-1 flex-1 focus:border-brand outline-none" />
+          {c.linkedin_url && <a href={c.linkedin_url} target="_blank" rel="noopener noreferrer" className="text-sm text-brand font-medium whitespace-nowrap">Open ↗</a>}
+        </div>
         <div className="mt-2 flex flex-wrap gap-1.5 items-center">
           {(c.crm_contact_emails||[]).map(e=><a key={e.id} href={'mailto:'+e.email} className="text-xs bg-indigo-50 text-brand rounded px-2 py-0.5">{e.email}{e.is_primary?' ★':''}</a>)}
           <button onClick={addEmail} className="text-xs text-slate-400 hover:text-slate-600">+ email</button>
@@ -465,7 +479,7 @@ function Timeline({leadId,contactId,onChange}){
               </div>
               {it.type==='email' && it.email_subject && <div className="text-sm font-medium mt-0.5">{it.email_subject}</div>}
               {it.type==='email' && <div className="text-xs text-slate-400">{it.email_from} {it.email_direction==='outbound'?'→':'←'} {it.email_to}</div>}
-              {it.body && <div className={"text-sm whitespace-pre-wrap mt-0.5 "+(it.task_done?'line-through text-slate-400':'')}>{it.body}</div>}
+              {it.body && <div className={"text-sm whitespace-pre-wrap mt-0.5 "+(it.task_done?'line-through text-slate-400':'')}>{linkify(it.body)}</div>}
               {it.crm_attachments?.length>0 && <div className="flex gap-2 flex-wrap mt-2">{it.crm_attachments.map(a=><Attachment key={a.id} a={a}/>)}</div>}
             </div>
           </div>
@@ -487,12 +501,12 @@ function Attachment({a}){
 // ---- Contacts sub-tab inside a Lead ----
 function Contacts({lead,onChange,onOpenContact}){
   const [adding,setAdding] = useState(false);
-  const [f,setF] = useState({name:'',title:'',phone:'',email:''});
+  const [f,setF] = useState({name:'',title:'',phone:'',email:'',linkedin:''});
   async function add(){
     if(!f.name && !f.email) return;
-    const {data:c} = await db.from('crm_contacts').insert({lead_id:lead.id,name:f.name||null,title:f.title||null,phone:f.phone||null}).select('id').single();
+    const {data:c} = await db.from('crm_contacts').insert({lead_id:lead.id,name:f.name||null,title:f.title||null,phone:f.phone||null,linkedin_url:f.linkedin||null}).select('id').single();
     if(c && f.email) await db.from('crm_contact_emails').insert({contact_id:c.id,email:f.email.trim(),is_primary:true});
-    setF({name:'',title:'',phone:'',email:''}); setAdding(false); onChange();
+    setF({name:'',title:'',phone:'',email:'',linkedin:''}); setAdding(false); onChange();
   }
   async function delContact(c){ if(confirm('Remove contact?')){ await db.from('crm_contacts').delete().eq('id',c.id); onChange(); } }
 
@@ -513,8 +527,8 @@ function Contacts({lead,onChange,onOpenContact}){
       ))}
       {adding ? (
         <div className="border border-brand/40 rounded-xl p-3 space-y-2">
-          {['name','title','phone','email'].map(k=>(
-            <input key={k} placeholder={k[0].toUpperCase()+k.slice(1)} value={f[k]} onChange={e=>setF({...f,[k]:e.target.value})}
+          {[['name','Name'],['title','Title'],['phone','Phone'],['email','Email'],['linkedin','LinkedIn profile URL']].map(([k,label])=>(
+            <input key={k} placeholder={label} value={f[k]} onChange={e=>setF({...f,[k]:e.target.value})}
               className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-sm focus:border-brand outline-none" />
           ))}
           <div className="flex gap-2 justify-end"><button onClick={()=>setAdding(false)} className="text-sm text-slate-500 px-2">Cancel</button>
