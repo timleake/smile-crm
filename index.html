@@ -145,7 +145,7 @@ function Main(){
     (c.crm_contact_emails||[]).some(e=>e.email.toLowerCase().includes(s)));
   const fOpps = opps.filter(o=> !s || o.name.toLowerCase().includes(s) || (o.lead?.name||'').toLowerCase().includes(s));
 
-  const tabs = [['pipeline','Pipeline'],['list','Leads'],['contacts','Contacts'],['unsorted','Unsorted'+(unsortedCount?` (${unsortedCount})`:'')]];
+  const tabs = [['pipeline','Pipeline'],['list','Leads'],['contacts','Contacts'],['tasks','Tasks'],['unsorted','Unsorted'+(unsortedCount?` (${unsortedCount})`:'')]];
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -179,6 +179,7 @@ function Main(){
          : view==='pipeline' ? <Pipeline statuses={statuses} opps={fOpps} onOpenLead={setOpenLead} onChange={load}/>
          : view==='list' ? <LeadList leads={fLeads} onOpen={setOpenLead}/>
          : view==='contacts' ? <ContactsView contacts={fContacts} onOpen={setOpenContact}/>
+         : view==='tasks' ? <TasksView search={search} onOpen={setOpenLead}/>
          : <Unsorted leads={leads} onChange={load}/>}
       </main>
 
@@ -284,6 +285,55 @@ function ContactsView({contacts,onOpen}){
             {contacts.length===0 && <tr><td colSpan="4" className="px-4 py-10 text-center text-slate-300">No contacts yet.</td></tr>}
           </tbody>
         </table>
+      </div>
+    </div>
+  );
+}
+
+// =====================================================================
+// Tasks view — every task across all companies & contacts
+// =====================================================================
+function TasksView({search,onOpen}){
+  const [tasks,setTasks] = useState([]);
+  const [showDone,setShowDone] = useState(false);
+  const load = useCallback(async ()=>{
+    const {data} = await db.from('crm_activities')
+      .select('*, lead:crm_leads(id,name)').eq('type','task')
+      .order('task_done').order('task_due_date',{nullsFirst:false});
+    setTasks(data||[]);
+  },[]);
+  useEffect(()=>{ load(); },[load]);
+  async function toggle(t){ await db.from('crm_activities').update({task_done:!t.task_done, task_done_at:t.task_done?null:new Date().toISOString()}).eq('id',t.id); load(); }
+
+  const s = (search||'').toLowerCase();
+  const today = new Date(); today.setHours(0,0,0,0);
+  const filtered = tasks.filter(t=> (showDone||!t.task_done) && (!s || (t.body||'').toLowerCase().includes(s) || (t.lead?.name||'').toLowerCase().includes(s)));
+
+  return (
+    <div className="p-4 max-w-3xl mx-auto">
+      <div className="flex items-center justify-between mb-3">
+        <p className="text-sm text-slate-500">Every task across all companies & contacts.</p>
+        <label className="text-sm text-slate-500 flex items-center gap-1.5"><input type="checkbox" checked={showDone} onChange={e=>setShowDone(e.target.checked)} /> show completed</label>
+      </div>
+      <div className="space-y-2">
+        {filtered.map(t=>{
+          const overdue = t.task_due_date && !t.task_done && new Date(t.task_due_date) < today;
+          return (
+            <div key={t.id} className="bg-white border border-slate-200 rounded-xl p-3 flex items-start gap-3">
+              <input type="checkbox" checked={t.task_done} onChange={()=>toggle(t)} className="mt-1" />
+              <div className="flex-1 min-w-0">
+                <div className={"text-sm "+(t.task_done?'line-through text-slate-400':'')}>{t.body||'(no description)'}</div>
+                <div className="text-xs mt-1 flex items-center gap-2">
+                  <button onClick={()=>onOpen(t.lead_id)} className="text-brand font-medium">{t.lead?.name||'—'}</button>
+                  {t.task_due_date
+                    ? <span className={overdue?'text-rose-500 font-medium':'text-slate-400'}>{overdue?'overdue · ':'due '}{fmtDay(t.task_due_date)}</span>
+                    : <span className="text-slate-300">no due date</span>}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+        {filtered.length===0 && <div className="text-center text-slate-300 py-10 text-sm">No {showDone?'':'open '}tasks. 🎉</div>}
       </div>
     </div>
   );
@@ -409,6 +459,10 @@ function Timeline({leadId,contactId,onChange}){
   const [pending,setPending] = useState([]);
   const [busy,setBusy] = useState(false);
   const fileRef = useRef();
+  const [editId,setEditId] = useState(null);
+  const [editBody,setEditBody] = useState('');
+  const [editSubject,setEditSubject] = useState('');
+  const [editDue,setEditDue] = useState('');
 
   const load = useCallback(async ()=>{
     let q = db.from('crm_activities').select('*, crm_attachments(*)').order('occurred_at',{ascending:false});
@@ -443,6 +497,14 @@ function Timeline({leadId,contactId,onChange}){
   }
   async function toggleTask(it){ await db.from('crm_activities').update({task_done:!it.task_done, task_done_at: it.task_done?null:new Date().toISOString()}).eq('id',it.id); load(); }
   async function del(it){ if(confirm('Delete this entry?')){ await db.from('crm_activities').delete().eq('id',it.id); load(); onChange&&onChange(); } }
+  function startEdit(it){ setEditId(it.id); setEditBody(it.body||''); setEditSubject(it.email_subject||''); setEditDue(it.task_due_date||''); }
+  async function saveEdit(it){
+    const fields = { body: editBody };
+    if(it.type==='email') fields.email_subject = editSubject||null;
+    if(it.type==='task') fields.task_due_date = editDue||null;
+    await db.from('crm_activities').update(fields).eq('id',it.id);
+    setEditId(null); await load(); onChange&&onChange();
+  }
 
   const icon = {note:'📝',email:'✉️',task:'✅'};
 
@@ -475,12 +537,30 @@ function Timeline({leadId,contactId,onChange}){
               <div className="flex items-center gap-2 text-xs text-slate-400">
                 <span className="capitalize">{it.type}</span><span>·</span><span>{fmtDate(it.occurred_at)}</span>
                 {it.type==='task' && <label className="flex items-center gap-1 ml-1 text-slate-500"><input type="checkbox" checked={it.task_done} onChange={()=>toggleTask(it)} />{it.task_done?'done':(it.task_due_date?('due '+fmtDay(it.task_due_date)):'open')}</label>}
-                <button onClick={()=>del(it)} className="ml-auto opacity-0 group-hover:opacity-100 text-slate-300 hover:text-rose-500">delete</button>
+                <span className="ml-auto flex items-center gap-2">
+                  {editId!==it.id && <button onClick={()=>startEdit(it)} className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-brand">edit</button>}
+                  <button onClick={()=>del(it)} className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-rose-500">delete</button>
+                </span>
               </div>
-              {it.type==='email' && it.email_subject && <div className="text-sm font-medium mt-0.5">{it.email_subject}</div>}
-              {it.type==='email' && <div className="text-xs text-slate-400">{it.email_from} {it.email_direction==='outbound'?'→':'←'} {it.email_to}</div>}
-              {it.body && <div className={"text-sm whitespace-pre-wrap mt-0.5 "+(it.task_done?'line-through text-slate-400':'')}>{linkify(it.body)}</div>}
-              {it.crm_attachments?.length>0 && <div className="flex gap-2 flex-wrap mt-2">{it.crm_attachments.map(a=><Attachment key={a.id} a={a}/>)}</div>}
+              {editId===it.id ? (
+                <div className="mt-1 space-y-2">
+                  {it.type==='email' && <input value={editSubject} onChange={e=>setEditSubject(e.target.value)} placeholder="Subject" className="w-full border border-slate-200 rounded-lg px-2 py-1 text-sm focus:border-brand outline-none" />}
+                  <textarea value={editBody} onChange={e=>setEditBody(e.target.value)} className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-sm focus:border-brand outline-none" rows="6" />
+                  <div className="flex items-center gap-2">
+                    {it.type==='task' && <input type="date" value={editDue} onChange={e=>setEditDue(e.target.value)} className="text-sm border border-slate-200 rounded-lg px-2 py-1" />}
+                    <div className="flex-1" />
+                    <button onClick={()=>setEditId(null)} className="text-sm text-slate-500 px-2">Cancel</button>
+                    <button onClick={()=>saveEdit(it)} className="bg-brand text-white text-sm rounded-lg px-3 py-1.5">Save</button>
+                  </div>
+                </div>
+              ) : (
+                <React.Fragment>
+                  {it.type==='email' && it.email_subject && <div className="text-sm font-medium mt-0.5">{it.email_subject}</div>}
+                  {it.type==='email' && <div className="text-xs text-slate-400">{it.email_from} {it.email_direction==='outbound'?'→':'←'} {it.email_to}</div>}
+                  {it.body && <div className={"text-sm whitespace-pre-wrap mt-0.5 "+(it.task_done?'line-through text-slate-400':'')}>{linkify(it.body)}</div>}
+                  {it.crm_attachments?.length>0 && <div className="flex gap-2 flex-wrap mt-2">{it.crm_attachments.map(a=><Attachment key={a.id} a={a}/>)}</div>}
+                </React.Fragment>
+              )}
             </div>
           </div>
         ))}
