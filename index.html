@@ -382,6 +382,10 @@ function LeadDetail({leadId,statuses,onClose,onOpenContact,onChange}){
           className="text-sm border border-slate-200 rounded-lg px-2 py-1 mt-2 w-full focus:border-brand outline-none" />
         <textarea defaultValue={lead.description||''} placeholder="Notes about this company…" onBlur={e=>e.target.value!==(lead.description||'')&&patch({description:e.target.value})}
           className="text-sm border border-slate-200 rounded-lg px-2 py-1.5 mt-2 w-full resize-none focus:border-brand outline-none" rows="2" />
+        <div className="flex justify-end mt-2">
+          <button onClick={async()=>{ if(confirm('Delete “'+(lead.name||'this lead')+'” and ALL of its contacts, opportunities, and history? This cannot be undone.')){ await db.from('crm_leads').delete().eq('id',leadId); onClose(); onChange(); } }}
+            className="text-xs text-slate-400 hover:text-rose-500">Delete lead</button>
+        </div>
       </div>
 
       <div className="flex border-b border-slate-200 text-sm">
@@ -438,6 +442,10 @@ function ContactDetail({contactId,onClose,onOpenLead,onChange}){
         <div className="mt-2 flex flex-wrap gap-1.5 items-center">
           {(c.crm_contact_emails||[]).map(e=><a key={e.id} href={'mailto:'+e.email} className="text-xs bg-indigo-50 text-brand rounded px-2 py-0.5">{e.email}{e.is_primary?' ★':''}</a>)}
           <button onClick={addEmail} className="text-xs text-slate-400 hover:text-slate-600">+ email</button>
+        </div>
+        <div className="flex justify-end mt-2">
+          <button onClick={async()=>{ if(confirm('Delete “'+(c.name||'this contact')+'”? Their emails are removed (so forwards from them stop matching); notes they’re tagged on stay on the company timeline.')){ await db.from('crm_contacts').delete().eq('id',contactId); onClose(); onChange&&onChange(); } }}
+            className="text-xs text-slate-400 hover:text-rose-500">Delete contact</button>
         </div>
       </div>
       <div className="px-4 py-2 text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">Notes about {c.name||'this contact'}</div>
